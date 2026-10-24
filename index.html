@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日本オセロ連盟レーティング</title>
+<style>
+  body { margin: 0; background: #f1f0e8; font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif; }
+  #loading { padding: 48px 16px; text-align: center; color: #5b6f63; font-size: 14px; }
+  #loading .dot { display: inline-block; width: 8px; height: 8px; margin: 0 3px; border-radius: 50%;
+                  background: #1f6b3a; animation: b 1s infinite ease-in-out; }
+  #loading .dot:nth-child(2) { animation-delay: .15s; }
+  #loading .dot:nth-child(3) { animation-delay: .3s; }
+  @keyframes b { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+  #err { padding: 48px 16px; text-align: center; color: #a3372c; font-size: 14px; display: none; }
+  #err a { color: #1f6b3a; }
+</style>
+</head>
+<body>
+<div id="loading"><div><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><p>読み込み中…</p></div>
+<div id="err"></div>
+<div id="app"></div>
+
+<script>
+// ★ Apps Script の公開用URL（/exec で終わるもの）
+var EXEC_URL = 'https://script.google.com/macros/s/AKfycbwGucmw2qns4ZT5PuCSX6HZWSMlSIWZzn635BLYfK1BFoWOUmJDvHat6xmR_VYb3QMS8w/exec';
+
+(function () {
+  // このページ自身のURL（リンクの行き先をここにそろえてもらう）
+  var base = location.origin + location.pathname;
+
+  // ?player=… などをそのまま Apps Script に渡す（管理用の key は渡さない）
+  var params = new URLSearchParams(location.search);
+  params.delete('key');
+  params.set('format', 'frag');
+  params.set('base', base);
+
+  fetch(EXEC_URL + '?' + params.toString())
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (data) {
+      document.getElementById('loading').style.display = 'none';
+      if (data.title) document.title = data.title;
+      var app = document.getElementById('app');
+      app.innerHTML = data.html || '';
+      // 中身に含まれる <script> は、そのままでは動かないので作り直して実行する
+      var scripts = app.querySelectorAll('script');
+      for (var i = 0; i < scripts.length; i++) {
+        var old = scripts[i], s = document.createElement('script');
+        s.textContent = old.textContent;
+        old.parentNode.replaceChild(s, old);
+      }
+    })
+    .catch(function () {
+      document.getElementById('loading').style.display = 'none';
+      var e = document.getElementById('err');
+      var q = new URLSearchParams(location.search); q.delete('key');
+      var direct = EXEC_URL + (q.toString() ? '?' + q.toString() : '');
+      e.innerHTML = '読み込めませんでした。時間をおいて再読み込みしてください。<br><br>'
+        + '<a href="' + direct + '">元のページで開く</a>';
+      e.style.display = 'block';
+    });
+})();
+</script>
+</body>
+</html>
