@@ -22,43 +22,112 @@
 <div id="app"></div>
 
 <script>
-// ★ Apps Script の公開用URL（/exec で終わるもの）
+// ★ Apps Script の公開用URL（/exec で終わるもの）。サイトのファイルがまだ無いときだけ使う
 var EXEC_URL = 'https://script.google.com/macros/s/AKfycbwGucmw2qns4ZT5PuCSX6HZWSMlSIWZzn635BLYfK1BFoWOUmJDvHat6xmR_VYb3QMS8w/exec';
 
 (function () {
-  // このページ自身のURL（リンクの行き先をここにそろえてもらう）
   var base = location.origin + location.pathname;
-
-  // ?player=… などをそのまま Apps Script に渡す（管理用の key は渡さない）
   var params = new URLSearchParams(location.search);
-  params.delete('key');
-  params.set('format', 'frag');
-  params.set('base', base);
+  params.delete('key'); // 管理用の合言葉は扱わない
 
-  fetch(EXEC_URL + '?' + params.toString())
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function (data) {
-      document.getElementById('loading').style.display = 'none';
-      if (data.title) document.title = data.title;
-      var app = document.getElementById('app');
-      app.innerHTML = data.html || '';
-      // 中身に含まれる <script> は、そのままでは動かないので作り直して実行する
-      var scripts = app.querySelectorAll('script');
-      for (var i = 0; i < scripts.length; i++) {
-        var old = scripts[i], s = document.createElement('script');
-        s.textContent = old.textContent;
-        old.parentNode.replaceChild(s, old);
-      }
-    })
-    .catch(function () {
-      document.getElementById('loading').style.display = 'none';
-      var e = document.getElementById('err');
-      var q = new URLSearchParams(location.search); q.delete('key');
-      var direct = EXEC_URL + (q.toString() ? '?' + q.toString() : '');
-      e.innerHTML = '読み込めませんでした。時間をおいて再読み込みしてください。<br><br>'
-        + '<a href="' + direct + '">元のページで開く</a>';
-      e.style.display = 'block';
+  // 選手名・大会名をファイル名にする規則（Apps Script の Site.gs と同じ）
+  function safe(s) { return String(s).replace(/[\/\\?#%*:|"<>\s.]/g, '_'); }
+
+  function getJson(path) {
+    // 更新されていれば新しいものを、変わっていなければ手元の控えを使う
+    return fetch(path, { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+      return r.json();
     });
+  }
+
+  function loadScript(path) {
+    return fetch(path, { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function (code) {
+      var s = document.createElement('script');
+      s.textContent = code;
+      document.head.appendChild(s);
+    });
+  }
+
+  function show(title, html) {
+    document.getElementById('loading').style.display = 'none';
+    if (title) document.title = title;
+    var app = document.getElementById('app');
+    app.innerHTML = html || '';
+    // 中身に含まれる <script> は、そのままでは動かないので作り直して実行する
+    var scripts = app.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i++) {
+      var old = scripts[i], s = document.createElement('script');
+      s.textContent = old.textContent;
+      old.parentNode.replaceChild(s, old);
+    }
+    window.scrollTo(0, 0);
+  }
+
+  // サイトのファイルがまだ無いときは、今まで通り Apps Script から受け取る
+  function fallback() {
+    var q = new URLSearchParams(params.toString());
+    q.set('format', 'frag');
+    q.set('base', base);
+    return fetch(EXEC_URL + '?' + q.toString())
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) { show(d.title, d.html); });
+  }
+
+  function fail() {
+    document.getElementById('loading').style.display = 'none';
+    var e = document.getElementById('err');
+    var direct = EXEC_URL + (params.toString() ? '?' + params.toString() : '');
+    e.innerHTML = '読み込めませんでした。時間をおいて再読み込みしてください。<br><br>'
+      + '<a href="' + direct + '">元のページで開く</a>';
+    e.style.display = 'block';
+  }
+
+  // ---- 選手ページ：データを読んで、このブラウザで組み立てる ----
+  function playerPage(name) {
+    var key = String(name).trim().replace(/\s+/g, '');
+    var shell;
+    return Promise.all([getJson('data/shell.json'), loadScript('data/render.js')])
+      .then(function (r) {
+        shell = r[0];
+        return getJson('data/p/' + encodeURIComponent(safe(key)) + '.json')
+          .catch(function (e) { if (e.status === 404) return null; throw e; });
+      })
+      .then(function (d) {
+        var games = [], profile = {};
+        if (d) {
+          profile = { name: d.n, dan: d.d, block: d.b };
+          games = d.g.map(function (x) {
+            var t = d.t[x[1]] || ['', 1];
+            return { date: x[0], sheetName: t[0], legacy: !!t[1], oppName: x[2], oppRating: x[3],
+                     symbol: x[4], delta: Number(x[5]), rating: Number(x[6]) };
+          });
+        }
+        var html = renderPlayerPage_({
+          name: (d && d.n) || name, profile: profile, games: games,
+          year: params.get('year') || '', base: base, css: shell.css, nav: shell.nav
+        });
+        show(((d && d.n) || name) + '｜日本オセロ連盟レーティング', html);
+      });
+  }
+
+  // ---- それ以外のページ：書き出し済みの中身を表示する ----
+  function staticPage(path) {
+    return getJson(path).then(function (d) { show(d.title, d.html); });
+  }
+
+  var route;
+  var page = params.get('page');
+  if (params.get('player')) route = playerPage(params.get('player'));
+  else if (params.get('sheet')) route = staticPage('data/sheet/' + encodeURIComponent(safe(params.get('sheet'))) + '.json');
+  else if (page === 'tournaments') route = staticPage('data/tournaments.json');
+  else if (page === 'stats') route = staticPage('data/stats/' + encodeURIComponent(params.get('year') || 'latest') + '.json');
+  else route = staticPage('data/ranking.json');
+
+  route.catch(function () { return fallback(); }).catch(fail);
 })();
 </script>
 </body>
